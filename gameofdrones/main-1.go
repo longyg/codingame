@@ -1,4 +1,4 @@
-package main
+package main-1
 
 import (
 	"fmt"
@@ -44,7 +44,7 @@ type Drone struct {
 	ownerID int
 	pos     Pos
 	prevPos *Pos
-	target  *Target
+	task    *Task
 }
 
 // Player represent a player
@@ -55,9 +55,17 @@ type Player struct {
 
 // Target represent my target zones
 type Target struct {
-	zone      *Zone
-	completed bool
-	abandoned bool
+	zone         *Zone
+	completed    bool
+	taskAssigned bool
+	task         *Task
+}
+
+// Task represent a task of a drone
+type Task struct {
+	target *Target
+	done   bool
+	drones map[string]*Drone
 }
 
 // Distance from p1 to p2
@@ -74,9 +82,9 @@ func buildVoronoiDiagram() map[*Drone]*Zone {
 	for _, drone := range allDrones {
 		delete(voronoi, drone)
 		for _, zone := range allZones {
-			tmp := drone.turns2Zone(zone)
+			tmp := drone.pos.distance(zone.center)
 			_, exist := voronoi[drone]
-			if !exist || tmp < drone.turns2Zone(voronoi[drone]) {
+			if !exist || tmp < drone.pos.distance(voronoi[drone].center) {
 				voronoi[drone] = zone
 			}
 		}
@@ -225,9 +233,19 @@ func (drone *Drone) moveToCenterOfTargets() {
 	fmt.Printf("%d %d\n", centerOfTargets.x, centerOfTargets.y)
 }
 
-func (drone *Drone) toTarget() {
-	if nil != drone.target {
-		drone.moveToZone(drone.target.zone)
+func (drone *Drone) isTaskDone() bool {
+	if drone.isInside(drone.task.target.zone) {
+		fmt.Fprintln(os.Stderr, "Task Done:", drone.id, ":", drone.task.target.zone.id)
+		drone.task.done = true
+		drone.task = nil
+		return true
+	}
+	return false
+}
+
+func (drone *Drone) doTask() {
+	if nil != drone.task {
+		drone.moveToZone(drone.task.target.zone)
 	}
 }
 
@@ -283,23 +301,17 @@ func getMaxDrones(zone *Zone) int {
 	return max
 }
 
-func (drone *Drone) hasTarget() bool {
-	return drone.target != nil
-}
-
 func getNBestDrones(zone *Zone, n int) []*Drone {
 	myself := allPlayers[myID]
 	sortedDrones := myself.getSortedDrones(zone)
 	var drones []*Drone
 	for _, drone := range sortedDrones {
-		if !drone.hasTarget() {
+		if drone.task == nil {
 			drones = append(drones, drone)
 		}
 	}
 	if len(drones) < n {
 		drones = make([]*Drone, 0)
-	} else {
-		drones = drones[:n]
 	}
 	return drones
 }
@@ -314,40 +326,16 @@ func printAllZones() {
 	}
 }
 
-func (target *Target) abandon() {
-	target.abandoned = true
-}
-
-func (target *Target) unbandon() {
-	target.abandoned = false
-}
-
-func (target *Target) isOwned() bool {
-	return target.zone.ownerID == myID
-}
-
-func (target *Target) hasOwner() bool {
-	return target.zone.ownerID != -1
-}
-
-func (drone *Drone) idle() bool {
-	return drone.target == nil
-}
-
-func checkTargets() {
-	for _, target := range targets {
-		if target.zone.ownerID == myID {
-			target.completed = true
-		} else {
-			target.completed = false
-		}
-		if target.completed || target.abandoned {
-			for _, drone := range getDronesOfPlayer(myID) {
-				if drone.target == target {
-					drone.target = nil
-				}
+func (target *Target) checkTask() {
+	if target.taskAssigned && target.task != nil {
+		done := true
+		for _, drone := range target.task.drones {
+			_, ok := target.zone.inDrones[drone.id]
+			if !ok {
+				done = false
 			}
 		}
+		target.task.done = done
 	}
 }
 
@@ -417,7 +405,7 @@ func main() {
 			for i := 0; i < nTarget; i++ {
 				zone := sortedZones[i]
 				fmt.Fprintln(os.Stderr, "SortedZone", i, ":", zone.id, ":", zone.center)
-				targets[i] = &Target{zone: zone}
+				targets[i] = &Target{zone: zone, completed: false, nDrones: 0}
 			}
 
 			centerOfTargets = getCenterOfTargets()
@@ -427,13 +415,19 @@ func main() {
 
 		printAllZones()
 
-		voronoi := buildVoronoiDiagram()
+		// voronoi := buildVoronoiDiagram()
 
 		// myself := allPlayers[myID]
 
-		checkTargets()
-
 		for _, target := range targets {
+
+			if target.zone.ownerID == myID {
+				target.completed = true
+			}
+			target.checkTask()
+			if target.taskAssigned && !target.task.done {
+				continue
+			}
 
 			if !target.completed {
 				// n := myself.getNumberOfDronesInZone(target.zone)
@@ -442,22 +436,14 @@ func main() {
 				// if need more than 3 drones to control a zone, abandon the target
 				if n < 5 {
 					needed := 1
-					if target.hasOwner() {
+					if target.zone.ownerID != -1 {
 						needed = n + 1
 					}
 					drones := getNBestDrones(target.zone, needed)
-					fmt.Fprintln(os.Stderr, "target: ", target.zone.id, ", needed=", needed, ", available:", len(drones))
-
-					if len(drones) == needed {
-						target.unbandon()
-					}
-
 					for _, drone := range drones {
-						fmt.Fprintln(os.Stderr, "Set target for drone:", drone.id, ", target:", target.zone.id)
-						drone.target = target
+						fmt.Fprintln(os.Stderr, "Set task:", drone.id, ":", target.zone.id)
+						drone.task = &Task{target: target, done: false}
 					}
-				} else {
-					target.abandon()
 				}
 			} else {
 
@@ -465,11 +451,11 @@ func main() {
 		}
 
 		for _, drone := range getDronesOfPlayer(myID) {
-			if drone.target != nil {
-				drone.toTarget()
+			if drone.task != nil {
+				drone.doTask()
 			} else {
-				zone := getOwnedVoronoi(voronoi, drone)
-				drone.moveToZone(zone)
+				// zone := getOwnedVoronoi(voronoi, drone)
+				// drone.moveToZone(zone)
 			}
 		}
 	}
