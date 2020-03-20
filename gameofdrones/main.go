@@ -43,7 +43,7 @@ type Drone struct {
 	id      string
 	ownerID int
 	pos     Pos
-	prevPos *Pos
+	prevPos Pos
 	target  *Target
 }
 
@@ -267,8 +267,9 @@ func (player *Player) getNumberOfDronesInZone(zone *Zone) int {
 	return n
 }
 
-func getMaxDrones(zone *Zone) int {
+func (zone *Zone) getMaxDrones() (int, int) {
 	max := 0
+	pid := -1
 	for _, player := range allPlayers {
 		n := 0
 		for _, drone := range zone.inDrones {
@@ -278,9 +279,29 @@ func getMaxDrones(zone *Zone) int {
 		}
 		if n > max {
 			max = n
+			pid = player.id
 		}
 	}
-	return max
+	return pid, max
+}
+
+func (zone *Zone) hasDroneOfOthers() bool {
+	for _, drone := range zone.inDrones {
+		if drone.ownerID != myID {
+			return true
+		}
+	}
+	return false
+}
+
+func (zone *Zone) getMyDrones() []*Drone {
+	var drones []*Drone
+	for _, drone := range zone.inDrones {
+		if drone.ownerID == myID {
+			drones = append(drones, drone)
+		}
+	}
+	return drones
 }
 
 func (drone *Drone) hasTarget() bool {
@@ -359,6 +380,7 @@ func main() {
 	fmt.Scan(&nPlayers, &myID, &nDrones, &nZones)
 
 	nTarget = nZones
+	nMax := nDrones/nZones + 1
 	fmt.Fprintln(os.Stderr, "nPlayers =", nPlayers, ", myID =", myID, ", nDrones =", nDrones, ", nZones =", nZones, ", nTarget = ", nTarget)
 
 	for i := 0; i < nZones; i++ {
@@ -396,10 +418,10 @@ func main() {
 				droneID := fmt.Sprintf("%d-%d", i, j)
 				drone, ok := player.drones[droneID]
 				if !ok {
-					drone = &Drone{id: droneID, ownerID: i, pos: Pos{DX, DY}, prevPos: nil}
+					drone = &Drone{id: droneID, ownerID: i, pos: Pos{DX, DY}, prevPos: Pos{DX, DY}}
 					player.drones[droneID] = drone
 				} else {
-					drone.prevPos = &drone.pos
+					drone.prevPos = drone.pos
 					drone.pos = Pos{DX, DY}
 				}
 				delete(allDrones, droneID)
@@ -437,10 +459,10 @@ func main() {
 
 			if !target.completed {
 				// n := myself.getNumberOfDronesInZone(target.zone)
-				n := getMaxDrones(target.zone)
+				_, n := target.zone.getMaxDrones()
 				fmt.Fprintln(os.Stderr, "Max drones in target:", target.zone.id, ":", target.zone.center, ":", n)
 				// if need more than 3 drones to control a zone, abandon the target
-				if n < 5 {
+				if n < nMax {
 					needed := 1
 					if target.hasOwner() {
 						needed = n + 1
@@ -457,10 +479,19 @@ func main() {
 						drone.target = target
 					}
 				} else {
+					fmt.Fprintln(os.Stderr, "abandon target: ", target.zone.id)
 					target.abandon()
 				}
 			} else {
-
+				hasOther := target.zone.hasDroneOfOthers()
+				if hasOther {
+					myDrones := target.zone.getMyDrones()
+					if nil != myDrones {
+						for _, drone := range myDrones {
+							drone.target = target
+						}
+					}
+				}
 			}
 		}
 
