@@ -3,373 +3,362 @@ package main
 import (
 	"fmt"
 	"math"
+	"math/rand"
 	"os"
+	"sort"
 )
 
-var nPlayers, myID, nDrones, nZones int
-var allZones = make(map[int]*Zone)
-var allDrones = make(map[string]*Drone)
-var allPlayers = make(map[int]*Player)
-
-// RADIUS of zone
-var RADIUS = 100
-
-var nTarget int
-
-var isTargetInitialized bool
-
-var targets []*Target
-
-var centerOfTargets Pos
-
-// Pos represents a point in space
-type Pos struct {
-	x int
-	y int
+type Vec struct {
+	x, y int
 }
 
-// Zone represent a zone
+func (vec1 Vec) turns2(vec2 Vec) int {
+	return (int)(math.Ceil(norm(vec1.minus(vec2))/100) + 0.1)
+}
+
+func (vec1 Vec) turns2Zone(zone *Zone) int {
+	return (int)(math.Ceil((norm(vec1.minus(zone.pos))-100)/100) + 0.1)
+}
+
+func det(a, b Vec) int {
+	return a.x*b.y - a.y*b.x
+}
+func dot(a, b Vec) int {
+	return a.x*b.x + a.y*b.y
+}
+
+func norm(vec Vec) float64 {
+	return math.Sqrt(math.Pow(float64(vec.x), 2) + math.Pow(float64(vec.y), 2))
+}
+
+func (vec1 Vec) minus(vec2 Vec) Vec {
+	return Vec{vec1.x - vec2.x, vec1.y - vec2.y}
+}
+
+func (vec1 Vec) add(vec2 Vec) Vec {
+	return Vec{vec1.x + vec2.x, vec1.y + vec2.y}
+}
+
+func (vec1 Vec) divide(f float64) Vec {
+	return Vec{int(float64(vec1.x) / f), int(float64(vec1.y) / f)}
+}
+
+func (vec1 Vec) multiply(f float64) Vec {
+	return Vec{int(float64(vec1.x) * f), int(float64(vec1.y) * f)}
+}
+
 type Zone struct {
-	id        int
-	prevOwner int
-	ownerID   int
-	center    Pos
-	turns     map[int]int
-	inDrones  map[string]*Drone
+	pos     Vec
+	ownerId int
+	id      int
 }
 
-// Drone represent a drone
+type ZoneWrapper struct {
+	zones []*Zone
+	by    func(p, q *Zone) bool
+}
+
+func (zw ZoneWrapper) Len() int { // 重写 Len() 方法
+	return len(zw.zones)
+}
+func (zw ZoneWrapper) Swap(i, j int) { // 重写 Swap() 方法
+	zw.zones[i], zw.zones[j] = zw.zones[j], zw.zones[i]
+}
+func (zw ZoneWrapper) Less(i, j int) bool { // 重写 Less() 方法
+	return zw.by(zw.zones[i], zw.zones[j])
+}
+
 type Drone struct {
-	id      string
-	ownerID int
-	pos     Pos
-	prevPos Pos
-	target  *Target
+	id           int
+	playerId     int
+	pos          Vec
+	speed        Vec
+	expectedDest *Zone
+	turns2dest   int
 }
 
-// Player represent a player
-type Player struct {
-	id     int
-	drones map[string]*Drone
-}
-
-// Target represent my target zones
-type Target struct {
-	zone      *Zone
-	completed bool
-	abandoned bool
-}
-
-// Distance from p1 to p2
-func (p1 Pos) distance(p2 Pos) float64 {
-	return math.Sqrt(math.Pow(float64(p2.x-p1.x), 2) + math.Pow(float64(p2.y-p1.y), 2))
-}
-
-func moveToTarget(target Pos) {
-	fmt.Printf("%d %d\n", target.x, target.y)
-}
-
-func buildVoronoiDiagram() map[*Drone]*Zone {
-	voronoi := make(map[*Drone]*Zone)
-	for _, drone := range allDrones {
-		delete(voronoi, drone)
-		for _, zone := range allZones {
-			tmp := drone.turns2Zone(zone)
-			_, exist := voronoi[drone]
-			if !exist || tmp < drone.turns2Zone(voronoi[drone]) {
-				voronoi[drone] = zone
-			}
-		}
-	}
-	return voronoi
-}
-
-func getOwnedVoronoi(voronoi map[*Drone]*Zone, drone *Drone) *Zone {
-	var z *Zone
-	for d, zone := range voronoi {
-		if d.pos.x == drone.pos.x && d.pos.y == drone.pos.y {
-			z = zone
-		}
-	}
-	return z
-}
-
-func getDronesOfPlayer(playerID int) map[string]*Drone {
-	for _, player := range allPlayers {
-		if player.id == playerID {
-			return player.drones
-		}
-	}
-	return nil
-}
-
-func setZoneOwner(zoneID, playerID int) {
-	for id, zone := range allZones {
-		if id == zoneID && zone.id == zoneID {
-			zone.prevOwner = zone.ownerID
-			zone.ownerID = playerID
-		}
-	}
-}
-
-func (p1 Pos) minus(p2 Pos) Pos {
-	return Pos{p1.x - p2.x, p1.y - p2.y}
-}
-
-func norm(p Pos) float64 {
-	return math.Sqrt(math.Pow(float64(p.x), 2) + math.Pow(float64(p.y), 2))
-}
-
-func (p1 Pos) turns2(p2 Pos) int {
-	return (int)(math.Ceil(norm(p1.minus(p2))/100) + 0.1)
-}
-
-func (p1 Pos) turns2Zone(zone *Zone) int {
-	return (int)(math.Ceil((norm(p1.minus(zone.center))-100)/100) + 0.1)
-}
-
-func (drone *Drone) turns2(p Pos) int {
-	return drone.pos.turns2(p)
+func (drone *Drone) turns2(vec Vec) int {
+	return drone.pos.turns2(vec)
 }
 
 func (drone *Drone) turns2Zone(zone *Zone) int {
 	return drone.pos.turns2Zone(zone)
 }
 
-func (player *Player) turns2(zone *Zone) int {
-	turns := 0
-	for _, drone := range player.drones {
-		turns += drone.turns2Zone(zone)
-	}
-	return turns
+type DroneWrapper struct {
+	drones []*Drone
+	by     func(p, q *Drone) bool
 }
 
-func (drone *Drone) isInside(zone *Zone) bool {
-	dist := math.Pow(float64(zone.center.x-drone.pos.x), 2) + math.Pow(float64(zone.center.y-drone.pos.y), 2)
-	if dist > math.Pow(float64(RADIUS), 2) {
-		return false
-	}
-	return true
+func (dw DroneWrapper) Len() int { // 重写 Len() 方法
+	return len(dw.drones)
+}
+func (dw DroneWrapper) Swap(i, j int) { // 重写 Swap() 方法
+	dw.drones[i], dw.drones[j] = dw.drones[j], dw.drones[i]
+}
+func (dw DroneWrapper) Less(i, j int) bool { // 重写 Less() 方法
+	return dw.by(dw.drones[i], dw.drones[j])
 }
 
-func setTurnsForZones() {
-	for _, zone := range allZones {
-		turns := make(map[int]int)
-		for _, player := range allPlayers {
-			turns[player.id] = player.turns2(zone)
+type Player struct {
+	id         int
+	score      int
+	drones     []*Drone
+	zones      []*Zone
+	zoneCenter Vec
+}
+
+type Task struct {
+	droneId int
+	pos     Vec
+}
+
+func (task Task) do() {
+	fmt.Printf("%d %d\n", task.pos.x, task.pos.y)
+}
+
+type Objective struct {
+	zone         *Zone
+	radius       int
+	nNeeded      int
+	candidates   []int
+	value        int
+	depends      []*Objective
+	done         bool
+	nContractors int
+}
+
+type ObjectiveWrapper struct {
+	objectives []Objective
+	by         func(p, q Objective) bool
+}
+
+func (dw ObjectiveWrapper) Len() int { // 重写 Len() 方法
+	return len(dw.objectives)
+}
+func (dw ObjectiveWrapper) Swap(i, j int) { // 重写 Swap() 方法
+	dw.objectives[i], dw.objectives[j] = dw.objectives[j], dw.objectives[i]
+}
+func (dw ObjectiveWrapper) Less(i, j int) bool { // 重写 Less() 方法
+	return dw.by(dw.objectives[i], dw.objectives[j])
+}
+
+type void struct{}
+
+var none void = void{}
+
+type Set struct {
+}
+
+var mapSize = Vec{4000, 1800}
+var nPlayers, myID, nDrones, nZones int
+var players []*Player
+var zones []*Zone
+
+const PI float64 = 3.14
+
+func flipCoin() bool {
+	i := rand.Intn(1)
+	if i == 1 {
+		return true
+	}
+	return false
+}
+
+func intersect(c1 Vec, r1_turns float64, c2 Vec, r2_turns float64, inter map[Vec]void) {
+	c2toc1 := c1.minus(c2)
+	r1 := (r1_turns)*100 - 1
+	r2 := (r2_turns)*100 - 1
+	dist := norm(c2toc1)
+	if dist == 0 {
+		return
+	}
+	if dist > r1+r2 {
+		return
+	}
+	if dist+r2 < r1 {
+		return
+	}
+	if dist+r1 < r2 {
+		return
+	}
+	frac := ((r2*r2-r1*r1)/dist/dist + 1) / 2
+	h := math.Sqrt(r2*r2 - frac*dist*frac*dist)
+	m := c2.add(c2toc1.multiply(frac))
+	inter1 := m.add(Vec{c2toc1.y, -c2toc1.x}.multiply(h)).divide(dist)
+	inter2 := m.add(Vec{-c2toc1.y, c2toc1.x}.multiply(h)).divide(dist)
+	if inter1.x > 0 && inter1.y > 0 && inter1.x < mapSize.x && inter1.y < mapSize.y {
+		inter[inter1] = none
+	}
+	if inter2.x > 0 && inter2.y > 0 && inter2.x < mapSize.x && inter2.y < mapSize.y {
+		inter[inter2] = none
+	}
+}
+
+type DecisionContext struct {
+	taskPerDrone []Task
+	interSet     []map[Vec]void
+	contracts    [][]*Objective
+}
+
+func getDroneById(droneId int, drones []*Drone) *Drone {
+	for _, drone := range drones {
+		if drone.id == droneId {
+			return drone
 		}
-		zone.turns = turns
 	}
+	return nil
 }
 
-func getSortedZonesByTurns() []*Zone {
-	var tmpZones []*Zone
-	for _, zone := range allZones {
-		tmpZones = append(tmpZones, zone)
+func (dc DecisionContext) addObjective(obj *Objective) bool {
+	if obj.done {
+		return true
 	}
-
-	for i := 0; i < len(tmpZones); i++ {
-		for j := i + 1; j < len(tmpZones); j++ {
-			tmp1 := tmpZones[i].turns[myID]
-			tmp2 := tmpZones[j].turns[myID]
-			if tmp2 < tmp1 {
-				tmp := tmpZones[j]
-				tmpZones[j] = tmpZones[i]
-				tmpZones[i] = tmp
+	var tmpTasks []Task
+	tmpInterSet := make([]map[Vec]void, nDrones)
+	for i, _ := range tmpInterSet {
+		tmpInterSet[i] = make(map[Vec]void)
+	}
+	savedContracts := make([][]*Objective, nDrones)
+	for _, di := range obj.candidates {
+		d := myself().drones[di]
+		if len(dc.contracts[di]) != 0 {
+			interOthers := dc.interSet[di]
+			for i, _ := range interOthers {
+				if i.turns2Zone(obj.zone) > obj.radius {
+					delete(interOthers, i)
+				}
 			}
-		}
-	}
-	return tmpZones
-}
-
-func (player *Player) getSortedDrones(zone *Zone) []*Drone {
-	n := len(player.drones)
-	var drones []*Drone
-	for _, drone := range player.drones {
-		drones = append(drones, drone)
-	}
-
-	for i := 0; i < n; i++ {
-		for j := i + 1; j < n; j++ {
-			tmp1 := drones[i].pos.turns2Zone(zone)
-			tmp2 := drones[j].pos.turns2Zone(zone)
-			if tmp2 < tmp1 {
-				tmp := drones[j]
-				drones[j] = drones[i]
-				drones[i] = tmp
+			if len(interOthers) == 0 {
+				goto MergeFailed
 			}
-		}
-	}
-	return drones
-}
+			{
+				tmpInterSet[di] = interOthers
+				interNew := make(map[Vec]void)
+				intersect(d.pos, 1, obj.zone.pos, float64(obj.radius+1), interNew)
+				for _, c := range dc.contracts[di] {
+					intersect(c.zone.pos, float64(c.radius+1), obj.zone.pos, float64(obj.radius+1), interNew)
+				}
+				for i, _ := range interNew {
+					if norm(i.minus(d.pos)) > 100 {
+						delete(interNew, i)
+					}
+				}
+				for _, c := range dc.contracts[di] {
+					for i, _ := range interNew {
+						if i.turns2Zone(c.zone) > c.radius {
+							delete(interNew, i)
+						}
+					}
+				}
+				for i, v := range interNew {
+					tmpInterSet[di][i] = v
+				}
 
-func (drone *Drone) moveToZone(zone *Zone) {
-	fmt.Fprintln(os.Stderr, "drone [", drone.id, "] move to zone [", zone.id, "]:", zone.center)
-	fmt.Printf("%d %d\n", zone.center.x, zone.center.y)
-}
+				m := Vec{0, 0}
+				for i, _ := range tmpInterSet[di] {
+					m = m.add(i)
+				}
+				m = m.divide(float64(len(tmpInterSet[di])))
 
-func (drone *Drone) moveToPos(pos Pos) {
-	fmt.Printf("%d %d\n", pos.x, pos.y)
-}
-
-func getCenterOfTargets() Pos {
-	x, y := 0, 0
-	for _, target := range targets {
-		x += target.zone.center.x
-		y += target.zone.center.y
-	}
-	return Pos{x / 3, y / 3}
-}
-
-func (drone *Drone) moveToCenterOfTargets() {
-	fmt.Printf("%d %d\n", centerOfTargets.x, centerOfTargets.y)
-}
-
-func (drone *Drone) toTarget() {
-	if nil != drone.target {
-		drone.moveToZone(drone.target.zone)
-	}
-}
-
-func (zone *Zone) addDrone(drone *Drone) {
-	if nil == zone.inDrones {
-		zone.inDrones = make(map[string]*Drone)
-	}
-	_, ok := zone.inDrones[drone.id]
-	if !ok {
-		fmt.Fprintln(os.Stderr, "drone [", drone.id, "] fly into zone [", zone.id, "]")
-		zone.inDrones[drone.id] = drone
-	}
-}
-
-func (drone *Drone) checkAndSetZone() {
-	for _, zone := range allZones {
-		if drone.isInside(zone) {
-			zone.addDrone(drone)
-		} else {
-			_, ok := zone.inDrones[drone.id]
-			if ok {
-				fmt.Fprintln(os.Stderr, "drone [", drone.id, "] left zone [", zone.id, "]")
-				delete(zone.inDrones, drone.id)
+				allOk := true
+				if d.turns2(m) > 1 {
+					fmt.Fprintln(os.Stderr, "Merging contracts failed when adding (", obj.zone.id, "dist", obj.radius, ") (point too far)")
+					for i, _ := range tmpInterSet[di] {
+						fmt.Fprintln(os.Stderr, i.x, i.y, ":", d.turns2(i))
+					}
+					allOk = false
+				}
+				for _, c := range dc.contracts[di] {
+					if m.turns2Zone(c.zone) > c.radius {
+						fmt.Fprintln(os.Stderr, "Merging contracts failed when adding (", obj.zone.id, "dist", obj.radius, ") (zone", c.zone.id, ", dist", c.radius, ")")
+						for i, _ := range tmpInterSet[di] {
+							fmt.Fprintln(os.Stderr, i.x, i.y, ":", i.turns2Zone(c.zone))
+						}
+						allOk = false
+					}
+				}
+				if allOk {
+					tmpTasks = append(tmpTasks, Task{di, m})
+					continue
+				}
 			}
-		}
-	}
-}
-
-// get number of drones which are already stayed in a zone
-func (player *Player) getNumberOfDronesInZone(zone *Zone) int {
-	n := 0
-	for _, drone := range zone.inDrones {
-		if drone.ownerID == player.id {
-			n++
-		}
-	}
-	return n
-}
-
-func (zone *Zone) getMaxDrones() (int, int) {
-	max := 0
-	pid := -1
-	for _, player := range allPlayers {
-		n := 0
-		for _, drone := range zone.inDrones {
-			if drone.ownerID == player.id {
-				n++
+		MergeFailed:
+			if len(tmpTasks) >= obj.nNeeded {
+				continue
 			}
+			available := true
+			for _, c := range dc.contracts[di] {
+				if c.nContractors == c.nNeeded {
+					available = false
+					break
+				}
+			}
+			if !available {
+				continue
+			}
+			for _, c := range dc.contracts[di] {
+				c.nContractors--
+			}
+			savedContracts[di] = dc.contracts[di]
+			dc.contracts[di] = make([]*Objective, 0)
+			tmpInterSet[di] = make(map[Vec]void)
 		}
-		if n > max {
-			max = n
-			pid = player.id
+
+		if len(dc.contracts[di]) == 0 {
+			intersect(d.pos, 1, obj.zone.pos, float64(obj.radius+1), tmpInterSet[di])
+			if len(tmpInterSet[di]) == 0 {
+				for i := 0; i < 6; i++ {
+					n := 2
+					x := int(100 * math.Cos(float64(n)*PI*float64(i)/6))
+					y := int(100 * math.Sin(float64(n)*PI*float64(i)/6))
+					v := Vec{x, y}
+					vec := d.pos.add(v)
+					tmpInterSet[di][vec] = none
+				}
+			}
+			tmpTasks = append(tmpTasks, Task{di, obj.zone.pos})
 		}
 	}
-	return pid, max
-}
-
-func (zone *Zone) hasDroneOfOthers() bool {
-	for _, drone := range zone.inDrones {
-		if drone.ownerID != myID {
-			return true
+	if len(tmpTasks) >= obj.nNeeded {
+		for _, t := range tmpTasks {
+			dc.taskPerDrone[t.droneId] = t
+			dc.interSet[t.droneId] = tmpInterSet[t.droneId]
+			dc.contracts[t.droneId] = append(dc.contracts[t.droneId], obj)
+			fmt.Fprintln(os.Stderr, "assigned drone", t.droneId, "to (", obj.zone.id, ", dist", obj.radius, " )")
+		}
+		obj.nContractors = len(tmpTasks)
+		return true
+	}
+	for di := 0; di < nDrones; di++ {
+		for _, c := range savedContracts[di] {
+			dc.contracts[di] = append(dc.contracts[di], c)
+			c.nContractors++
 		}
 	}
 	return false
 }
 
-func (zone *Zone) getMyDrones() []*Drone {
-	var drones []*Drone
-	for _, drone := range zone.inDrones {
-		if drone.ownerID == myID {
-			drones = append(drones, drone)
+func getAnotherPlayer() *Player {
+	for _, player := range players {
+		if player.id != myID {
+			return player
 		}
 	}
-	return drones
+	return nil
 }
 
-func (drone *Drone) hasTarget() bool {
-	return drone.target != nil
-}
-
-func getNBestDrones(zone *Zone, n int) []*Drone {
-	myself := allPlayers[myID]
-	sortedDrones := myself.getSortedDrones(zone)
-	var drones []*Drone
-	for _, drone := range sortedDrones {
-		if !drone.hasTarget() {
-			drones = append(drones, drone)
+func getPlayerById(id int) *Player {
+	for _, player := range players {
+		if nil != player && player.id == id {
+			return player
 		}
 	}
-	if len(drones) < n {
-		drones = make([]*Drone, 0)
-	} else {
-		drones = drones[:n]
-	}
-	return drones
+	return nil
 }
 
-func printAllZones() {
-	fmt.Fprintln(os.Stderr, "All zones: ")
-	for _, zone := range allZones {
-		fmt.Fprintln(os.Stderr, " Zone: ", zone.id, ",", zone.ownerID, ",", len(zone.inDrones), zone.turns)
-		for _, drone := range zone.inDrones {
-			fmt.Fprintln(os.Stderr, "     Drone: ", drone.id, ",", drone.ownerID, ",", drone.pos)
-		}
-	}
-}
-
-func (target *Target) abandon() {
-	target.abandoned = true
-}
-
-func (target *Target) unbandon() {
-	target.abandoned = false
-}
-
-func (target *Target) isOwned() bool {
-	return target.zone.ownerID == myID
-}
-
-func (target *Target) hasOwner() bool {
-	return target.zone.ownerID != -1
-}
-
-func (drone *Drone) idle() bool {
-	return drone.target == nil
-}
-
-func checkTargets() {
-	for _, target := range targets {
-		if target.zone.ownerID == myID {
-			target.completed = true
-		} else {
-			target.completed = false
-		}
-		if target.completed || target.abandoned {
-			for _, drone := range getDronesOfPlayer(myID) {
-				if drone.target == target {
-					drone.target = nil
-				}
-			}
-		}
-	}
+func myself() *Player {
+	return getPlayerById(myID)
 }
 
 func main() {
@@ -378,35 +367,78 @@ func main() {
 	// D: number of drones in each team (3 to 11)
 	// Z: number of zones on the map (4 to 8)
 	fmt.Scan(&nPlayers, &myID, &nDrones, &nZones)
+	rand.Seed(int64(myID) * 27)
 
-	nTarget = nZones
-	nMax := nDrones/nZones + 1
-	fmt.Fprintln(os.Stderr, "nPlayers =", nPlayers, ", myID =", myID, ", nDrones =", nDrones, ", nZones =", nZones, ", nTarget = ", nTarget)
+	fmt.Fprintln(os.Stderr, "nPlayers =", nPlayers, ", myID =", myID, ", nDrones =", nDrones, ", nZones =", nZones)
+
+	players = make([]*Player, nPlayers)
+	zones = make([]*Zone, nZones)
 
 	for i := 0; i < nZones; i++ {
 		// X: corresponds to the position of the center of a zone. A zone is a circle with a radius of 100 units.
 		var X, Y int
 		fmt.Scan(&X, &Y)
-		allZones[i] = &Zone{id: i, prevOwner: -1, ownerID: -1, center: Pos{X, Y}}
+		zones[i] = &Zone{id: i, pos: Vec{X, Y}}
 	}
 
+	var sortedZones []*Zone
+	for _, zone := range zones {
+		sortedZones = append(sortedZones, zone)
+	}
+	sort.Sort(ZoneWrapper{sortedZones, func(a, b *Zone) bool {
+		return a.pos.x < b.pos.x
+	}})
+
+	fmt.Fprintln(os.Stderr, "zones:", zones)
+	fmt.Fprintln(os.Stderr, "sortedZones:", sortedZones)
+
+	// lhome := (sortedZones[0].pos.add(sortedZones[1].pos).add(sortedZones[2].pos)).divide(3)
+	// rhome := (sortedZones[nZones-1].pos.add(sortedZones[nZones-2].pos).add(sortedZones[nZones-3].pos)).divide(3)
+	// lfront := (sortedZones[2].pos.add(sortedZones[3].pos)).divide(2)
+	// rfront := (sortedZones[nZones-3].pos.add(sortedZones[nZones-4].pos)).divide(2)
+	// best3Home := lhome
+	// if norm(lhome.minus(lfront)) < norm(rhome.minus(rfront)) {
+	// 	best3Home = rhome
+	// }
+	// var defaultHome *Vec
+	// if nPlayers == 2 {
+	// 	defaultHome = &getAnotherPlayer().zoneCenter
+	// } else if nPlayers == 3 {
+	// 	defaultHome = &Vec{mapSize.x / 2, mapSize.y / 2}
+	// } else {
+	// 	defaultHome = &best3Home
+	// }
+	// currHome := defaultHome
+	var currHome *Vec
+
 	for {
-		controllers := make([]int, nZones)
+		for _, player := range players {
+			if nil != player {
+				player.zones = make([]*Zone, 0)
+			}
+		}
+
 		for i := 0; i < nZones; i++ {
 			// TID: ID of the team controlling the zone (0, 1, 2, or 3) or -1 if it is not controlled.
 			// The zones are given in the same order as in the initialization.
 			var TID int
 			fmt.Scan(&TID)
-
-			setZoneOwner(i, TID)
-			controllers[i] = TID
+			zone := zones[i]
+			zone.ownerId = TID
+			if zone.ownerId != -1 {
+				player := getPlayerById(zone.ownerId)
+				if nil != player {
+					player.score++
+					player.zones = append(player.zones, zone)
+				}
+			}
 		}
-		fmt.Fprintln(os.Stderr, "Controllers:", controllers)
 
 		for i := 0; i < nPlayers; i++ {
-			player, ok := allPlayers[i]
-			if !ok {
-				player = &Player{id: i, drones: make(map[string]*Drone)}
+			player := players[i]
+			if nil == player {
+				player = &Player{id: i, drones: make([]*Drone, nDrones), score: 0}
+				players[i] = player
 			}
 
 			for j := 0; j < nDrones; j++ {
@@ -415,93 +447,283 @@ func main() {
 				var DX, DY int
 				fmt.Scan(&DX, &DY)
 
-				droneID := fmt.Sprintf("%d-%d", i, j)
-				drone, ok := player.drones[droneID]
-				if !ok {
-					drone = &Drone{id: droneID, ownerID: i, pos: Pos{DX, DY}, prevPos: Pos{DX, DY}}
-					player.drones[droneID] = drone
-				} else {
-					drone.prevPos = drone.pos
-					drone.pos = Pos{DX, DY}
+				drone := player.drones[j]
+				if nil == drone {
+					drone = &Drone{pos: Vec{-1, -1}}
+					player.drones[j] = drone
 				}
-				delete(allDrones, droneID)
-				allDrones[droneID] = drone
+				drone.id = j
+				drone.playerId = player.id
+				prevPos := drone.pos
+				drone.pos = Vec{DX, DY}
+				if player.id == myID {
+					fmt.Fprintln(os.Stderr, "drone", drone.id, ", pos:", drone.pos)
+				}
+				if prevPos.x < 0 {
+					continue
+				}
 
-				drone.checkAndSetZone()
+				drone.speed = drone.pos.minus(prevPos)
+				drone.expectedDest = nil
+				for _, zone := range zones {
+					a := norm(drone.speed)
+					b := math.Abs(float64(det(zone.pos.minus(drone.pos), drone.speed.divide(norm(drone.speed)))))
+					c := dot(zone.pos.minus(drone.pos), drone.speed)
+					if a > 70 && b < 100 && c > 0 {
+						dist := drone.turns2Zone(zone)
+						if drone.expectedDest != nil && drone.turns2dest < dist {
+							continue
+						}
+						if drone.expectedDest != nil {
+							// changed!
+						}
+						drone.expectedDest = zone
+						drone.turns2dest = dist
+					}
+				}
+				if len(player.zones) == 0 {
+					player.zoneCenter = Vec{mapSize.x / 2, mapSize.y / 2}
+				} else {
+					player.zoneCenter = Vec{0, 0}
+					for _, zone := range player.zones {
+						player.zoneCenter = player.zoneCenter.add(zone.pos)
+					}
+					player.zoneCenter = player.zoneCenter.divide(float64(len(player.zones)))
+				}
 			}
-			allPlayers[i] = player
 		}
 
-		if !isTargetInitialized {
-			setTurnsForZones()
-			sortedZones := getSortedZonesByTurns()
-			targets = make([]*Target, nTarget)
-			for i := 0; i < nTarget; i++ {
-				zone := sortedZones[i]
-				fmt.Fprintln(os.Stderr, "SortedZone", i, ":", zone.id, ":", zone.center)
-				targets[i] = &Target{zone: zone}
-			}
-
-			centerOfTargets = getCenterOfTargets()
-			isTargetInitialized = true
-			fmt.Fprintln(os.Stderr, "Targets:", len(targets), ", center: ", centerOfTargets)
+		if len(myself().drones) >= 3 {
+			currHome = &myself().zoneCenter
 		}
 
-		printAllZones()
-
-		voronoi := buildVoronoiDiagram()
-
-		// myself := allPlayers[myID]
-
-		checkTargets()
-
-		for _, target := range targets {
-
-			if !target.completed {
-				// n := myself.getNumberOfDronesInZone(target.zone)
-				_, n := target.zone.getMaxDrones()
-				fmt.Fprintln(os.Stderr, "Max drones in target:", target.zone.id, ":", target.zone.center, ":", n)
-				// if need more than 3 drones to control a zone, abandon the target
-				if n < nMax {
-					needed := 1
-					if target.hasOwner() {
-						needed = n + 1
+		// find objectivies
+		var objectives []Objective
+		for _, zone := range zones {
+			isMyZone := zone.ownerId == myID
+			for _, player := range players {
+				sort.Sort(DroneWrapper{player.drones, func(a, b *Drone) bool {
+					return a.turns2Zone(zone) < b.turns2Zone(zone)
+				}})
+			}
+			attackers := make([][]*Drone, nDrones)
+			for i := 0; i < nDrones; i++ {
+				pid := (myID + 1) % nPlayers
+				attackers[i] = append(attackers[i], getPlayerById(pid).drones[i])
+			}
+			for pi := 2; pi < nPlayers; pi++ {
+				for di := 0; di < nDrones; di++ {
+					pid := (myID + pi) % nPlayers
+					drone := getPlayerById(pid).drones[di]
+					diff := attackers[di][0].turns2Zone(zone) - drone.turns2Zone(zone)
+					if diff > 0 {
+						attackers[di] = make([]*Drone, 0)
 					}
-					drones := getNBestDrones(target.zone, needed)
-					fmt.Fprintln(os.Stderr, "target: ", target.zone.id, ", needed=", needed, ", available:", len(drones))
-
-					if len(drones) == needed {
-						target.unbandon()
+					if diff >= 0 {
+						attackers[di] = append(attackers[di], drone)
 					}
-
-					for _, drone := range drones {
-						fmt.Fprintln(os.Stderr, "Set target for drone:", drone.id, ", target:", target.zone.id)
-						drone.target = target
-					}
-				} else {
-					fmt.Fprintln(os.Stderr, "abandon target: ", target.zone.id)
-					target.abandon()
 				}
-			} else {
-				hasOther := target.zone.hasDroneOfOthers()
-				if hasOther {
-					myDrones := target.zone.getMyDrones()
-					if nil != myDrones {
-						for _, drone := range myDrones {
-							drone.target = target
+			}
+
+			fmt.Fprint(os.Stderr, isMyZone, " Zone ", zone.id, " allies: ")
+			for _, drone := range myself().drones {
+				fmt.Fprint(os.Stderr, " ", drone.turns2Zone(zone))
+			}
+			fmt.Fprint(os.Stderr, " enemies: ")
+			for _, attacker := range attackers {
+				fmt.Fprint(os.Stderr, " ", attacker[0].turns2Zone(zone))
+			}
+			fmt.Fprint(os.Stderr, " contested: ")
+
+			var currDepends []*Objective
+			//compute objectives for the zone
+			for di := 0; di < nDrones-1; di++ {
+				contested := false
+				for _, d := range attackers[di] {
+					if (nil != d.expectedDest && d.expectedDest.id == zone.id) || d.turns2Zone(zone) == 0 {
+						contested = true
+						break
+					}
+				}
+				x := "o"
+				if contested {
+					x = "x"
+				}
+				fmt.Fprint(os.Stderr, " ", x)
+				if isMyZone {
+					curDist := attackers[di][0].turns2Zone(zone)
+					nextDist := attackers[di+1][0].turns2Zone(zone)
+					if curDist == nextDist {
+						continue
+					}
+					mydi := di
+					diff := curDist - myself().drones[mydi].turns2Zone(zone)
+					obj := Objective{}
+					obj.radius = 0
+					if curDist-1 > 0 {
+						obj.radius = curDist - 1
+					}
+					if diff < 0 {
+						isMyZone = false
+						continue
+					} else if diff <= 1 {
+						for mydi+1 < nDrones && myself().drones[mydi+1].turns2Zone(zone) <= obj.radius+1 {
+							mydi++
+						}
+						for i := 0; i < mydi; i++ {
+							if myself().drones[i].turns2Zone(zone) >= obj.radius {
+								obj.candidates = append(obj.candidates, myself().drones[i].id)
+							}
+						}
+					} else if diff > 1 {
+						continue
+					}
+					obj.zone = zone
+					obj.value = 42 + 10*(nextDist-curDist)/nextDist
+					obj.nNeeded = di + 1 - (mydi + 1 - len(obj.candidates))
+					obj.depends = currDepends
+					objectives = append(objectives, obj)
+					currDepends = append(currDepends, &objectives[len(objectives)-1])
+				} else {
+					for mydi := di; mydi <= di; mydi++ {
+						for mydi+1 < nDrones && myself().drones[mydi].turns2Zone(zone) == myself().drones[mydi+1].turns2Zone(zone) {
+							mydi++
+						}
+						diff := attackers[di][0].turns2Zone(zone) - myself().drones[mydi].turns2Zone(zone)
+						obj := Objective{}
+						tmp := myself().drones[mydi].turns2Zone(zone) - 1
+						obj.radius = 0
+						if tmp > 0 {
+							obj.radius = tmp
+						}
+
+						obj.zone = zone
+						if diff >= 1 {
+							isMyZone = true
+							for i := 0; i <= mydi; i++ {
+								if myself().drones[i].turns2Zone(zone) >= obj.radius {
+									obj.candidates = append(obj.candidates, myself().drones[i].id)
+								}
+							}
+							obj.value = 40 + 10*(attackers[di+1][0].turns2Zone(zone)-myself().drones[mydi].turns2Zone(zone))/attackers[di+1][0].turns2Zone(zone)
+						} else if !contested {
+							if diff >= -1 {
+								for i := 0; i <= mydi; i++ {
+									if myself().drones[i].turns2Zone(zone) >= obj.radius {
+										obj.candidates = append(obj.candidates, myself().drones[i].id)
+									}
+								}
+								obj.value = 10 + 10*(attackers[di+1][0].turns2Zone(zone)-myself().drones[mydi].turns2Zone(zone))/attackers[di+1][0].turns2Zone(zone)
+							} else {
+								continue
+							}
+						} else {
+							continue
+						}
+						obj.nNeeded = di + 1 - (mydi + 1 - len(obj.candidates))
+						objectives = append(objectives, obj)
+						if isMyZone {
+							currDepends = make([]*Objective, 0)
+							currDepends = append(currDepends, &objectives[len(objectives)-1])
 						}
 					}
 				}
 			}
+			fmt.Fprintln(os.Stderr, " ", zone.pos)
+		}
+		fmt.Fprintln(os.Stderr, "Found", len(objectives), "objectivies.")
+
+		//chose a set of objectives and assign tasks
+		var decisions DecisionContext = DecisionContext{}
+		decisions.contracts = make([][]*Objective, nDrones)
+		decisions.interSet = make([]map[Vec]void, nDrones)
+		decisions.taskPerDrone = make([]Task, nDrones)
+
+		for _, player := range players {
+			sort.Sort(DroneWrapper{player.drones, func(a, b *Drone) bool {
+				return a.id < b.id
+			}})
+		}
+		sort.Sort(ObjectiveWrapper{objectives, func(a, b Objective) bool {
+			if a.value == b.value {
+				return flipCoin()
+			} else {
+				return a.value > b.value
+			}
+		}})
+
+		for _, obj := range objectives {
+			obj.depends = append(obj.depends, &obj)
+			depDone := true
+			tmpContext := decisions
+			for _, dep := range obj.depends {
+				if !tmpContext.addObjective(dep) {
+					depDone = false
+					break
+				}
+			}
+			if depDone {
+				for _, dep := range obj.depends {
+					dep.done = true
+				}
+				decisions = tmpContext
+			} else {
+				for _, o := range objectives {
+					o.nContractors = 0
+				}
+				for di := 0; di < nDrones; di++ {
+					for _, c := range decisions.contracts[di] {
+						c.nContractors++
+					}
+				}
+			}
 		}
 
-		for _, drone := range getDronesOfPlayer(myID) {
-			if drone.target != nil {
-				drone.toTarget()
-			} else {
-				zone := getOwnedVoronoi(voronoi, drone)
-				drone.moveToZone(zone)
+		for di := 0; di < nDrones; di++ {
+			available := true
+			for _, c := range decisions.contracts[di] {
+				if c.nContractors == c.nNeeded {
+					available = false
+					break
+				}
 			}
+			if !available {
+				continue
+			}
+			for _, c := range decisions.contracts[di] {
+				c.nContractors--
+			}
+			decisions.contracts[di] = make([]*Objective, 0)
+		}
+
+		for _, obj := range objectives {
+			fmt.Fprint(os.Stderr, obj.done, " score: ", obj.value, " , ", obj.nNeeded, " drone(s) needed to ")
+			if obj.zone != nil {
+				fmt.Fprint(os.Stderr, " zone ", obj.zone.id)
+			} else {
+				fmt.Fprint(os.Stderr, " home? ")
+			}
+			fmt.Fprint(os.Stderr, " at dist ", obj.radius, " from: ")
+			for _, di := range obj.candidates {
+				contracted := false
+				for _, c := range decisions.contracts[di] {
+					if c == &obj {
+						contracted = true
+						break
+					}
+				}
+				fmt.Fprint(os.Stderr, " ", contracted, di)
+			}
+			fmt.Fprintln(os.Stderr, "")
+		}
+
+		for i := 0; i < nDrones; i++ {
+			if len(decisions.contracts[i]) == 0 {
+				decisions.taskPerDrone[i] = Task{i, *currHome}
+			}
+		}
+		for _, t := range decisions.taskPerDrone {
+			t.do()
 		}
 	}
 }
