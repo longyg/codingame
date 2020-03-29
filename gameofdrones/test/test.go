@@ -1,35 +1,48 @@
 package main
 
-import (
-	"fmt"
-	"math"
-)
+import "fmt"
 
-type S struct {
+type Vec struct {
 	x, y int
 }
 
-type SortWrapper struct {
-	s  []*S
-	by func(p, q *S) bool
+type Player struct {
+	zoneCenter Vec
 }
 
-func (sw SortWrapper) Len() int { // 重写 Len() 方法
-	return len(sw.s)
+var players []*Player
+
+func getAnotherPlayer() *Player {
+	for i, player := range players {
+		if i != myID {
+			return player
+		}
+	}
+	return nil
 }
-func (sw SortWrapper) Swap(i, j int) { // 重写 Swap() 方法
-	sw.s[i], sw.s[j] = sw.s[j], sw.s[i]
-}
-func (sw SortWrapper) Less(i, j int) bool { // 重写 Less() 方法
-	return sw.by(sw.s[i], sw.s[j])
-}
+
+var myID int
 
 func main() {
+	myID = 0
+	players = make([]*Player, 2)
+	for i := 0; i < 2; i++ {
+		player := Player{}
+		player.zoneCenter = Vec{10, 20}
+		players[i] = &player
+	}
 
-	norm := math.Sqrt(math.Pow(float64(10), 2) + math.Pow(float64(10), 2))
-	fmt.Println(norm)
+	var defaultV *Vec
+	defaultV = &getAnotherPlayer().zoneCenter
 
-	a := 1
-	x := int(float64(a) / 11)
-	fmt.Println(x)
+	cur := defaultV
+
+	fmt.Println(defaultV)
+
+	for i := 0; i < 2; i++ {
+		player := players[i]
+		player.zoneCenter = Vec {2, 1}
+	}
+	fmt.Println(defaultV)
+	fmt.Println(cur)
 }
