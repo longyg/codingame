@@ -249,9 +249,7 @@ func (dc DecisionContext) addObjective(obj *Objective) bool {
 			for _, vec := range toDelete {
 				delete(interOthers, vec)
 			}
-			if len(interOthers) == 0 {
-				goto MergeFailed
-			}
+			if len(interOthers) == 0 { goto MergeFailed }
 			{
 				tmpInterSet[di] = interOthers
 				interNew := make(map[Vec]void)
@@ -338,10 +336,10 @@ func (dc DecisionContext) addObjective(obj *Objective) bool {
 		if len(dc.contracts[di]) == 0 {
 			intersect(d.pos, 1, obj.zone.pos, float64(obj.radius+1), tmpInterSet[di])
 			if len(tmpInterSet[di]) == 0 {
-				for i := 0; i < 6; i++ {
-					n := 2
-					x := int(100 * math.Cos(float64(n)*PI*float64(i)/6))
-					y := int(100 * math.Sin(float64(n)*PI*float64(i)/6))
+				var i float64
+				for i = 0; i < 6; i++ {
+					x := int(100 * math.Cos(2*PI*i/6))
+					y := int(100 * math.Sin(2*PI*i/6))
 					v := Vec{x, y}
 					vec := d.pos.add(v)
 					tmpInterSet[di][vec] = none
@@ -427,14 +425,14 @@ func main() {
 		return a.pos.x < b.pos.x
 	}})
 
-	fmt.Fprintln(os.Stderr, "Initial zones:")
-	for i, zone := range zones {
-		fmt.Fprintln(os.Stderr, "  zone", i, ": id =", zone.id, ", pos =", zone.pos, ", owner =", zone.ownerId)
-	}
-	fmt.Fprintln(os.Stderr, "sortedZones:")
-	for i, zone := range sortedZones {
-		fmt.Fprintln(os.Stderr, "  zone", i, ": id =", zone.id, ", pos =", zone.pos, ", owner =", zone.ownerId)
-	}
+	//fmt.Fprintln(os.Stderr, "Initial zones:")
+	//for i, zone := range zones {
+	//	fmt.Fprintln(os.Stderr, "  zone", i, ": id =", zone.id, ", pos =", zone.pos, ", owner =", zone.ownerId)
+	//}
+	//fmt.Fprintln(os.Stderr, "sortedZones:")
+	//for i, zone := range sortedZones {
+	//	fmt.Fprintln(os.Stderr, "  zone", i, ": id =", zone.id, ", pos =", zone.pos, ", owner =", zone.ownerId)
+	//}
 
 	var defaultHome *Vec
 	if nPlayers == 2 {
@@ -533,7 +531,7 @@ func main() {
 				}
 				player.zoneCenter = player.zoneCenter.divide(float64(len(player.zones)))
 			}
-			fmt.Fprintln(os.Stderr, " Player", i, ": id =", player.id, ", score =", player.score)
+			fmt.Fprintln(os.Stderr, " Player", i, ": id =", player.id, ", score =", player.score, ", center =", player.zoneCenter, ", zones =", len(player.zones))
 		}
 
 		fmt.Fprintln(os.Stderr, "my drones:")
@@ -542,13 +540,13 @@ func main() {
 			if nil != drone.expectedDest {
 				dest = drone.expectedDest.id
 			}
-			fmt.Fprintln(os.Stderr, "  ", i, ": id =", drone.id, ", pos =", drone.pos, ", speed =", drone.speed, ", dest =", dest, ", turn =", drone.turns2dest)
+			fmt.Fprintln(os.Stderr, "  ", i, ": id =", drone.id, ", pos =", drone.pos, ", speed =", drone.speed, ", dest = {", dest, ",", drone.turns2dest, "}")
 		}
 
 		if len(myself().zones) >= 3 {
 			currHome = &myself().zoneCenter
 		}
-		fmt.Fprintln(os.Stderr, "curr home:", *currHome)
+		fmt.Fprintln(os.Stderr, "========= curr home:", *currHome, "=========")
 
 		// find objectivies
 		var objectives []Objective
@@ -579,16 +577,16 @@ func main() {
 			}
 
 			fmt.Fprintln(os.Stderr, "Zone ", zone.id, ": isMyZone =", isMyZone, ":")
-			fmt.Fprintln(os.Stderr, "  allies: ")
-			for i, drone := range myself().drones {
-				fmt.Fprintln(os.Stderr, "    ", i, ": id =", drone.id, ", pid =", drone.playerId, ", dist =", drone.turns2Zone(zone))
+			fmt.Fprint(os.Stderr, "  allies: ")
+			for _, drone := range myself().drones {
+				fmt.Fprint(os.Stderr, " ", drone.turns2Zone(zone))
 			}
-			fmt.Fprintln(os.Stderr, "  enemies: ")
-			for i, attacker := range attackers {
-				for j, drone := range attacker {
-					fmt.Fprintln(os.Stderr, "    ", i, "-", j, ": id =", drone.id, ", pid =", drone.playerId, ", dist =", drone.turns2Zone(zone))
-				}
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprint(os.Stderr, "  enemies: ")
+			for _, attacker := range attackers {
+				fmt.Fprint(os.Stderr, " ", attacker[0].turns2Zone(zone))
 			}
+			fmt.Fprintln(os.Stderr)
 			fmt.Fprint(os.Stderr, "  contested: ")
 
 			var currDepends []*Objective
@@ -776,9 +774,9 @@ func main() {
 						break
 					}
 				}
-				fmt.Fprint(os.Stderr, di, " ( contracted:", contracted, " )")
+				fmt.Fprint(os.Stderr, di, " ( contracted:", contracted, " ) ")
 			}
-			fmt.Fprintln(os.Stderr, "")
+			fmt.Fprintln(os.Stderr)
 		}
 
 		for i := 0; i < nDrones; i++ {
