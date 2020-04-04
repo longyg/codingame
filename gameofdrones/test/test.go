@@ -78,4 +78,12 @@ func main() {
 
 	var i float64 = 0
 	fmt.Println(i)
+
+	fmt.Println()
+	fmt.Println("=======================")
+	fmt.Println()
+
+	v := Vec{3799, 1254}
+	z := Zone{pos: Vec{3043, 1183}}
+	fmt.Println(v.turns2Zone(&z))
 }
